@@ -189,8 +189,6 @@ class LM(object):
                     ).cpu().detach().numpy()
                 )
 
-        output['logits'] = None  # free tensor memory we won't use again
-
         # detach(): don't need grads here
         # cpu(): not used by GPU during generation; may lead to GPU OOM if left on GPU during long generations
         for attributes in ["hidden_states", "encoder_hidden_states", "decoder_hidden_states"]:
