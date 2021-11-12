@@ -3,15 +3,15 @@ import inspect
 import json
 import os
 import random
+
+import torch
 import transformers
 import ecco
 import numpy as np
-from typing import Any, Dict, Optional, List, Tuple
 from IPython import display as d
-from torch.nn import functional as F
 from ecco.attribution import *
 from ecco.output import OutputSeq
-from typing import Optional, Any, List
+from typing import Optional, Any, List, Union
 from operator import attrgetter
 import re
 
@@ -68,6 +68,9 @@ class LM(object):
             else 'cpu'
 
         self.tokenizer = tokenizer
+        if self.tokenizer.pad_token_id is None: # set pad token for batch tokenization
+            self.tokenizer.pad_token = self.tokenizer.eos_token
+
         self.verbose = verbose
         self._path = os.path.dirname(ecco.__file__)
 
@@ -110,6 +113,8 @@ class LM(object):
         return tensor
 
     def _generate_token(self,
+                        enc_tokens: List[str],
+                        dec_tokens: List[str],
                         encoder_input_ids,
                         encoder_attention_mask: Optional,
                         decoder_input_ids: Optional,
@@ -118,7 +123,7 @@ class LM(object):
                         temperature: float,
                         top_k: int,
                         top_p: float,
-                        attribution_flags: Optional[List[str]] = ['gradient', 'grad_x_input', 'integrated_gradients']):
+                        attribution_flags: Optional[List[str]] = ['gradient', 'grad_x_input', 'integrated_gradients', 'lime']):
         """
         Run a forward pass through the model and sample a token.
         """
@@ -189,6 +194,20 @@ class LM(object):
                     ).cpu().detach().numpy()
                 )
 
+            if 'lime' in attribution_flags:
+
+                # deactivate hooks
+                self._remove_hooks()
+
+                # Add lime scores to self.attributions and also save HTML output
+                lime_attribution, lime_html_code = compute_lime_scores(
+                    lm=self,
+                    enc_tokens=enc_tokens,
+                    dec_tokens=dec_tokens
+                )
+                self.attributions['lime'].append(lime_attribution)
+                self.attributions_additional_info['lime'].append(lime_html_code)
+
         # detach(): don't need grads here
         # cpu(): not used by GPU during generation; may lead to GPU OOM if left on GPU during long generations
         for attributes in ["hidden_states", "encoder_hidden_states", "decoder_hidden_states"]:
@@ -217,6 +236,51 @@ class LM(object):
 
         return prediction_id, output
 
+    def _init_ids_and_attention_masks(self, input_str: Union[str, List[str]], output_str: Optional[Union[str, List[str]]] = None) \
+            -> Tuple[torch.Tensor, Union[None, torch.Tensor], Union[None, torch.Tensor]]:
+
+
+        tok_result = self.tokenizer(input_str, return_tensors="pt", padding=True)
+        input_ids, attention_mask = tok_result['input_ids'], tok_result['attention_mask']
+
+        if self.model_type == 'enc-dec': # FIXME: only done because causal LMs like GPT-2 have the _prepare_decoder_input_ids_for_generation method but do not use it
+            if output_str is None:
+                assert len(input_ids.size()) == 2 # will break otherwise
+                decoder_input_ids = self.model._prepare_decoder_input_ids_for_generation(input_ids, None, None)
+                decoder_input_ids = self.to(decoder_input_ids)
+            else:
+                raise NotImplemented
+        else:
+            decoder_input_ids = None
+
+        # TODO: missing decoder mask: needed for batch generations
+
+        return input_ids, attention_mask, decoder_input_ids
+
+    def _update_ids_and_attention_masks(self, input_ids: torch.Tensor, attention_mask: torch.Tensor,
+                                        decoder_input_ids: torch.Tensor, new_token_id: int) \
+            -> Tuple[torch.Tensor, Union[None, torch.Tensor], Union[None, torch.Tensor]]:
+
+        if decoder_input_ids is not None:
+            assert len(decoder_input_ids.size()) == 2 # will break otherwise
+            decoder_input_ids = torch.cat([decoder_input_ids, torch.tensor([[new_token_id]])], dim=-1)
+        else:
+            input_ids = torch.cat([input_ids, torch.tensor([[new_token_id]])], dim=-1)
+
+            # Recomputing Attention Mask
+            if getattr(self.model, '_prepare_attention_mask_for_generation'):
+                assert len(input_ids.size()) == 2 # will break otherwise
+                attention_mask = self.model._prepare_attention_mask_for_generation(
+                    input_ids,
+                    self.model.config.pad_token_id,
+                    self.model.config.eos_token_id
+                )
+                attention_mask = self.to(attention_mask)
+
+        # TODO: missing decoder mask: needed for batch generations
+
+        return input_ids, attention_mask, decoder_input_ids
+
     def generate(self, input_str: str,
                  max_length: Optional[int] = 8,
                  temperature: Optional[float] = None,
@@ -224,7 +288,7 @@ class LM(object):
                  top_p: Optional[float] = None,
                  get_model_output: Optional[bool] = False,
                  do_sample: Optional[bool] = None,
-                 attribution: Optional[List[str]] = ['gradient', 'grad_x_input', 'integrated_gradients'],
+                 attribution: Optional[List[str]] = ['gradient', 'grad_x_input', 'integrated_gradients', 'lime'],
                  generate: Optional[int] = None):
         """
         Generate tokens in response to an input prompt.
@@ -251,11 +315,8 @@ class LM(object):
         temperature = temperature if temperature is not None else self.model.config.temperature
         do_sample = do_sample if do_sample is not None else self.model.config.task_specific_params.get('text-generation', {}).get('do_sample', False)
 
-        pad_token_id = self.model.config.pad_token_id
-        eos_token_id = self.model.config.eos_token_id
-
         # We needs this as a batch in order to collect activations.
-        input_ids = self.tokenizer(input_str, return_tensors="pt")['input_ids']
+        input_ids, attention_mask, decoder_input_ids = self._init_ids_and_attention_masks(input_str)
         n_input_tokens = len(input_ids[0])
         cur_len = n_input_tokens
 
@@ -263,7 +324,9 @@ class LM(object):
             max_length = n_input_tokens + generate
 
         past = None
+        enc_tokens, dec_tokens = [self.tokenizer.decode([i]) for i in input_ids[0]], []
         self.attributions = defaultdict(list)
+        self.attributions_additional_info = defaultdict(list)
         outputs = []
 
         if cur_len >= max_length:
@@ -271,27 +334,15 @@ class LM(object):
                 "max_length set to {} while input token has more tokens ({}). Consider increasing max_length" \
                     .format(max_length, cur_len))
 
-        # Get attention mask and decoder input ids
-        if getattr(self.model, '_prepare_attention_mask_for_generation'):
-            assert len(input_ids.size()) == 2 # will break otherwise
-            attention_mask = self.model._prepare_attention_mask_for_generation(input_ids, pad_token_id, eos_token_id)
-            attention_mask = self.to(attention_mask)
-        else:
-            attention_mask = None
-
-        if self.model_type == 'enc-dec': # FIXME: only done because causal LMs like GPT-2 have the _prepare_decoder_input_ids_for_generation method but do not use it
-            assert len(input_ids.size()) == 2 # will break otherwise
-            decoder_input_ids = self.model._prepare_decoder_input_ids_for_generation(input_ids, None, None)
-        else:
-            decoder_input_ids = None
-
         # Print output
         n_printed_tokens = n_input_tokens
         if self.verbose:
             viz_id = self.display_input_sequence(input_ids[0])
 
         while cur_len < max_length:
-            output_token_id, output = self._generate_token(encoder_input_ids=input_ids,
+            output_token_id, output = self._generate_token(enc_tokens=enc_tokens,
+                                                           dec_tokens=dec_tokens,
+                                                           encoder_input_ids=input_ids,
                                                            encoder_attention_mask=attention_mask,
                                                            decoder_input_ids=decoder_input_ids,
                                                            past=past,  # Note: this is not currently used
@@ -304,17 +355,9 @@ class LM(object):
             if get_model_output:
                 outputs.append(output)
 
-            if decoder_input_ids is not None:
-                assert len(decoder_input_ids.size()) == 2 # will break otherwise
-                decoder_input_ids = torch.cat([decoder_input_ids, torch.tensor([[output_token_id]])], dim=-1)
-            else:
-                input_ids = torch.cat([input_ids, torch.tensor([[output_token_id]])], dim=-1)
-
-                # Recomputing Attention Mask
-                if getattr(self.model, '_prepare_attention_mask_for_generation'):
-                    assert len(input_ids.size()) == 2 # will break otherwise
-                    attention_mask = self.model._prepare_attention_mask_for_generation(input_ids, pad_token_id, eos_token_id)
-                    attention_mask = self.to(attention_mask)
+            input_ids, attention_mask, decoder_input_ids = self._update_ids_and_attention_masks(
+                input_ids, attention_mask, decoder_input_ids, output_token_id
+            )
 
             offset = n_input_tokens if decoder_input_ids is not None else 0
             generated_token_ids = decoder_input_ids if decoder_input_ids is not None else input_ids
@@ -323,12 +366,11 @@ class LM(object):
             while len(generated_token_ids[0]) + offset != n_printed_tokens:
 
                 # Display token
+                token_id = generated_token_ids[0][n_printed_tokens - offset].cpu().numpy()
+                token = self.tokenizer.decode([token_id])
+                dec_tokens.append(token)
                 if self.verbose:
-                    self.display_token(
-                        viz_id,
-                        generated_token_ids[0][n_printed_tokens - offset].cpu().numpy(),
-                        cur_len
-                    )
+                    self.display_token(viz_id, token, token_id, cur_len)
 
                 n_printed_tokens += 1
 
@@ -339,7 +381,7 @@ class LM(object):
 
             cur_len = cur_len + 1
 
-            if output_token_id == eos_token_id:
+            if output_token_id == self.model.config.eos_token_id:
                 break
 
         # Turn activations from dict to a proper array
@@ -364,25 +406,20 @@ class LM(object):
         else:
             all_token_ids = input_ids[0]
 
-        tokens = []
-        for i in all_token_ids:
-            token = self.tokenizer.decode([i])
-            tokens.append(token)
-
-        attributions = self.attributions
         attn = getattr(output, "attentions", None)
 
         return OutputSeq(**{'tokenizer': self.tokenizer,
                             'token_ids': all_token_ids.unsqueeze(0),  # Add a batch dimension
                             'n_input_tokens': n_input_tokens,
                             'output_text': self.tokenizer.decode(all_token_ids),
-                            'tokens': [tokens],  # Add a batch dimension
+                            'tokens': [enc_tokens + dec_tokens],  # Add a batch dimension
                             'embedding_states': embedding_states,
                             'encoder_hidden_states': encoder_hidden_states,
                             'decoder_hidden_states': decoder_hidden_states,
                             'attention': attn,
                             'model_outputs': outputs,
-                            'attribution': attributions,
+                            'attribution': self.attributions,
+                            'attribution_additional_info': self.attributions_additional_info,
                             'activations': self.activations,
                             'collect_activations_layer_nums': self.collect_activations_layer_nums,
                             'lm_head': self.model.lm_head,
@@ -631,9 +668,9 @@ class LM(object):
         d.display(d.Javascript(js))
         return viz_id
 
-    def display_token(self, viz_id, token_id, position):
+    def display_token(self, viz_id, token, token_id, position):
         token = {
-            'token': self.tokenizer.decode([token_id]),
+            'token': token,
             'token_id': int(token_id),
             'position': position,
             'type': 'output'

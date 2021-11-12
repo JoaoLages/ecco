@@ -11,6 +11,8 @@ from torch.nn import functional as F
 from sklearn import decomposition
 from typing import Dict, Optional, List, Tuple, Union
 
+from ecco.attribution import get_lime_tokenized_text
+
 
 class OutputSeq:
     """An OutputSeq object is the result of running a language model on some input data. It contains not only the output
@@ -51,6 +53,7 @@ class OutputSeq:
                  decoder_hidden_states=None,
                  embedding_states=None,
                  attribution=None,
+                 attribution_additional_info=None,
                  activations=None,
                  collect_activations_layer_nums=None,
                  attention=None,
@@ -89,6 +92,7 @@ class OutputSeq:
         self.decoder_hidden_states = decoder_hidden_states
         self.embedding_states = embedding_states
         self.attribution = attribution
+        self.attribution_additional_info = attribution_additional_info
         self.activations = activations
         self.collect_activations_layer_nums = collect_activations_layer_nums
         self.model_outputs = model_outputs
@@ -166,6 +170,8 @@ class OutputSeq:
 
         assert attr_method in self.attribution, \
             f"attr_method={attr_method} not found. Choose one of the following: {list(self.attribution.keys())}"
+        assert attr_method != 'lime', "`position` method not implemented for `attr_method='lime'`"
+
         attribution = self.attribution[attr_method]
         for idx, token in enumerate(self.tokens):
             type = "input" if idx < self.n_input_tokens else 'output'
@@ -236,30 +242,36 @@ class OutputSeq:
             To get a percentage value, we normalize the scores by dividing by the sum of the attribution scores for all
             the tokens in the sequence.
         """
-        position = self.n_input_tokens
-
-        importance_id = position - self.n_input_tokens
-        tokens = []
 
         assert attr_method in self.attribution, \
             f"attr_method={attr_method} not found. Choose one of the following: {list(self.attribution.keys())}"
         attribution = self.attribution[attr_method]
-        for idx, token in enumerate(self.tokens[0]):
-            type = "input" if idx < self.n_input_tokens else 'output'
-            if idx < len(attribution[importance_id]):
-                imp = attribution[importance_id][idx]
-            else:
-                imp = 0
 
-            tokens.append({'token': token,
-                           'token_id': int(self.token_ids[0][idx]),
-                           'type': type,
-                           'value': str(imp),  # because json complains of floats
-                           'position': idx
-                           })
+        # LIME uses different tokens, change accordingly
+        if attr_method != 'lime':
+            n_input_tokens = self.n_input_tokens
+            tokens = self.tokens[0]
+        else:
+            n_input_tokens = attribution[0].shape[0]
+            tokens = get_lime_tokenized_text(self.output_text)
+
+        tokens_info = []
+
+        for idx, token in enumerate(tokens):
+            type = "input" if idx < n_input_tokens else 'output'
+            tokens_info.append(
+                {
+                    'token': token,
+                    'type': type,
+                    'position': idx,
+
+                    # TODO: change JS Ecco package to show extra_html whenever it is present
+                    # 'extra_html': self.attribution_additional_info[importance_id] if attr_method == 'lime' else None
+               }
+            )
 
         data = {
-            'tokens': tokens,
+            'tokens': tokens_info,
             'attributions': [att.tolist() for att in attribution]
         }
 
