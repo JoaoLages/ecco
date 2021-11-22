@@ -118,7 +118,7 @@ class LM(object):
                         temperature: float,
                         top_k: int,
                         top_p: float,
-                        attribution_flags: Optional[List[str]] = ['gradient', 'grad_x_input', 'integrated_gradients']):
+                        attribution_flags: Optional[List[str]] = ['gradient', 'grad_x_input', 'integrated_gradients', 'kernel_shap']):
         """
         Run a forward pass through the model and sample a token.
         """
@@ -188,6 +188,26 @@ class LM(object):
                         prediction_id=prediction_id
                     ).cpu().detach().numpy()
                 )
+                
+            if 'kernel_shap' in attribution_flags:
+
+                # deactivate hooks: integrated gradients will perform multiple forward steps
+                self._remove_hooks()
+                baseline = self.model_embeddings.mean(dim=0)
+
+                # Add integrated gradients to self.attributions
+                self.attributions['kernel_shap'].append(
+                    compute_kernel_shap_scores(
+                        model=self.model,
+                        forward_kwargs={
+                            'inputs_embeds': encoder_inputs_embeds,
+                            'decoder_inputs_embeds': decoder_inputs_embeds
+                        },
+                        prediction_id=prediction_id,
+                        baseline=baseline,
+                        n_samples=20
+                    ).cpu().detach().numpy()
+                )
 
         output['logits'] = None  # free tensor memory we won't use again
 
@@ -226,7 +246,7 @@ class LM(object):
                  top_p: Optional[float] = None,
                  get_model_output: Optional[bool] = False,
                  do_sample: Optional[bool] = None,
-                 attribution: Optional[List[str]] = ['gradient', 'grad_x_input', 'integrated_gradients'],
+                 attribution: Optional[List[str]] = ['gradient', 'grad_x_input', 'integrated_gradients', 'kernel_shap'],
                  generate: Optional[int] = None):
         """
         Generate tokens in response to an input prompt.

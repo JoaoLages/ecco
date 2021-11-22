@@ -1,7 +1,7 @@
 from functools import partial
 import torch
-from typing import Any, Dict, Optional, Tuple, List
-from captum.attr import IntegratedGradients
+from typing import Any, Dict, List, Optional
+from captum.attr import IntegratedGradients, KernelShap
 from torch.nn import functional as F
 import transformers
 
@@ -157,6 +157,88 @@ def compute_integrated_gradients_scores(model: transformers.PreTrainedModel, for
     ig = IntegratedGradients(forward_func=forward_func)
     attributions = ig.attribute(inputs, target=prediction_id)
      
+    if decoder_ is not None:
+        # Does it make sense to concatenate encoder and decoder attributions before normalization?
+        # We assume that the encoder/decoder embeddings are the same
+        return normalize_attributes(torch.cat(attributions, dim=1))
+    else:
+        return normalize_attributes(attributions)
+
+
+def compute_kernel_shap_scores(model: transformers.PreTrainedModel, forward_kwargs: Dict[str, Any],
+                               prediction_id: torch.Tensor, baseline: torch.Tensor,
+                               n_samples: int, aggregation: str = "L2") -> torch.Tensor:
+
+    """
+    Computes the Kernel Shap primary attributions with respect to the specified `prediction_id`.
+
+    Args:
+        model: HuggingFace Transformers Pytorch language model.
+        forward_kwargs: contains all the inputs that are passed to `model` in the forward pass
+        prediction_id: Target Id. The Kernel Shap will be computed with respect to it.
+        aggregation: Aggregation/normalzation method to perform to the Integrated Gradients attributions.
+         Currently only "L2" is implemented
+
+    Returns: a tensor of the normalized attributions with shape (input sequence size,)
+
+    """
+    def model_forward(input_: torch.Tensor, decoder_: torch.Tensor, model, extra_forward_args: Dict[str, Any]) \
+            -> torch.Tensor:
+        if decoder_ is not None:
+            output = model(inputs_embeds=input_, decoder_inputs_embeds=decoder_, **extra_forward_args)
+        else:
+            output = model(inputs_embeds=input_, **extra_forward_args)
+        return F.softmax(output.logits[:, -1, :], dim=-1)
+
+    def normalize_attributes(attributes: torch.Tensor) -> torch.Tensor:
+        # attributes has shape (batch, sequence size, embedding dim)
+        attributes = attributes.squeeze(0)
+
+        if aggregation == "L2":  # norm calculates a scalar value (L2 Norm)
+            norm = torch.norm(attributes, dim=1)
+            attributes = norm / torch.sum(norm) # Normalize the values so they add up to 1
+        else:
+            raise NotImplemented
+
+        return attributes
+
+    extra_forward_args = {k: v for k, v in forward_kwargs.items() if k not in ['inputs_embeds', 'decoder_inputs_embeds']}
+    input_ = forward_kwargs.get('inputs_embeds')
+    decoder_ = forward_kwargs.get('decoder_inputs_embeds')
+
+    # TODO (slr): Prettify this park
+    if decoder_ is None:
+        forward_func = partial(model_forward, decoder_=decoder_, model=model, extra_forward_args=extra_forward_args)
+        inputs = input_
+
+        # The feature_mask define each vector with the same scalar as being a feature.
+        _, seq_len, hidden_dim = inputs.shape
+        feature_mask = torch.arange(0, seq_len) # seq_dim
+        feature_mask = feature_mask.repeat(1, hidden_dim, 1) # 1 x hidden_dim x seq_dim
+        feature_mask = feature_mask.transpose(1,2) # 1 x seq_dim x hidden_dim
+
+        baselines = baseline
+
+    else:
+        forward_func = partial(model_forward, model=model, extra_forward_args=extra_forward_args)
+        inputs = tuple([input_, decoder_])
+
+        _, seq_len_input_, hidden_dim_input_ = input_.shape
+        feature_mask_input_ = torch.arange(0, seq_len_input_) # seq_len_input_
+        feature_mask_input_ = feature_mask_input_.repeat(1, hidden_dim_input_, 1) # 1 x hidden_dim_input_ x seq_len_input_
+        feature_mask_input_ = feature_mask_input_.transpose(1,2) # 1 x seq_len_input_ x hidden_dim_input_
+
+        _, seq_len_decoder_, hidden_dim_decoder_ = decoder_.shape
+        feature_mask_decoder_ = torch.arange(seq_len_input_, seq_len_input_ + seq_len_decoder_) # seq_len_input_ + seq_len_decoder_
+        feature_mask_decoder_ = feature_mask_decoder_.repeat(1, hidden_dim_decoder_, 1) # 1 x hidden_dim_decoder_ x (seq_len_input_ + seq_len_decoder_)
+        feature_mask_decoder_ = feature_mask_decoder_.transpose(1,2) # 1 x (seq_len_input_ + seq_len_decoder_) x hidden_dim_decoder_
+        feature_mask = tuple([feature_mask_input_, feature_mask_decoder_])
+        baselines = tuple([baseline, baseline])
+
+    ig = KernelShap(forward_func=forward_func)
+    attributions = ig.attribute(inputs, target=prediction_id, feature_mask=feature_mask, baselines=baselines, n_samples=n_samples)
+    
+    # TODO (slr): Check if we really need this
     if decoder_ is not None:
         # Does it make sense to concatenate encoder and decoder attributions before normalization?
         # We assume that the encoder/decoder embeddings are the same
