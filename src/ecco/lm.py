@@ -121,7 +121,8 @@ class LM(object):
                        decoder_input_embeds: Optional[torch.Tensor],
                        prediction_id: torch.Tensor,
                        normalize_attributions: bool = True,
-                       attribution_flags: Optional[List[str]] = [],) -> None:
+                       attribution_flags: Optional[List[str]] = [],
+                       attribution_kwargs: Optional[Dict[str, Any]] = None) -> None:
         """
         Analyzes a predicted token.
         Currently this methods computes the primary attribution explainability scores for each given token.
@@ -141,8 +142,9 @@ class LM(object):
                         'decoder_inputs_embeds': decoder_input_embeds
                     },
                     prediction_id=prediction_id,
-                    normalize=normalize_attributions
-                ).cpu().detach().numpy()
+                    normalize=normalize_attributions,
+                    attribution_kwargs=attribution_kwargs
+                ).numpy()
             )
 
     def generate(self, input_str: str,
@@ -151,6 +153,7 @@ class LM(object):
                  attribution: List[str] = [],
                  normalize_attributions: bool = True,
                  beam_size: int = 1,
+                 attribution_kwargs: Optional[Dict[str, Any]] = None,
                  temperature: Optional[float] = None,
                  top_k: Optional[int] = None,
                  top_p: Optional[float] = None,
@@ -171,6 +174,8 @@ class LM(object):
                 token. This may lead to repetitive text. If set to True, the model considers
                 consults top_k and/or top_p to generate more interesting output.
             attribution: List of attribution methods to be calculated. By default, it does not calculate anything.
+            normalize_attributions: whether to normalize or not obtained primary attributions
+            attribution_kwargs: dict with extra options to be passed to Captum's `attribute` method
             beam_size: Beam size to consider while generating
             generate_kwargs: Other arguments to be passed directly to self.model.generate
         """
@@ -231,6 +236,12 @@ class LM(object):
             output_scores=True,
             **generate_kwargs
         )
+        for prop in dir(output):
+            prop_value = getattr(output, prop)
+            if isinstance(prop_value, tuple) and getattr(prop_value[0], 'cpu', False):
+                setattr(output, prop, tuple(v.detach().cpu() for v in prop_value))
+            elif getattr(prop_value, 'cpu', False):
+                setattr(output, prop, prop_value.detach().cpu())
 
         # Get prediction logits for each chosen prediction id
         prediction_logits, prediction_ids = [], []
@@ -282,7 +293,8 @@ class LM(object):
                 decoder_input_embeds=decoder_input_embeds,
                 attribution_flags=attribution,
                 prediction_id=prediction_id,
-                normalize_attributions=normalize_attributions
+                normalize_attributions=normalize_attributions,
+                attribution_kwargs=attribution_kwargs
             )
 
             # Recomputing inputs ids, attention mask and decoder input ids
@@ -340,12 +352,12 @@ class LM(object):
                     for idx, layer_hs in enumerate(token_out_attr):
                         # in Hugging Face Transformers v4, there's an extra index for batch
                         if len(layer_hs.shape) == 3:  # If there's a batch dimension, pick the first oen
-                            hs = layer_hs.cpu().detach()[0].unsqueeze(0)  # Adding a dimension to concat to later
+                            hs = layer_hs.detach().cpu()[0].unsqueeze(0)  # Adding a dimension to concat to later
                         # Earlier versions are only 2 dimensional
                         # But also, in v4, for GPT2, all except the last one would have 3 dims, the last layer
                         # would only have two dims
                         else:
-                            hs = layer_hs.cpu().detach().unsqueeze(0)
+                            hs = layer_hs.detach().cpu().unsqueeze(0)
 
                         hs_list.append(hs)
 
