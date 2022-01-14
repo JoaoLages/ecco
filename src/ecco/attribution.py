@@ -98,13 +98,13 @@ def compute_primary_attributions_scores(attr_method : str, model: transformers.P
     if decoder_ is None:
         forward_func = partial(model_forward, decoder_=decoder_, model=model, extra_forward_args=extra_forward_args)
         inputs = input_
-        baselines = torch.randn(100, *tuple(inputs.shape[1:]), device=inputs.device)
+        baselines = torch.randn(20, *tuple(inputs.shape[1:]), device=inputs.device)
     else:
         forward_func = partial(model_forward, model=model, extra_forward_args=extra_forward_args)
         inputs = tuple([input_, decoder_])
         baselines = (
-            torch.randn(100, *tuple(input_.shape)[1:], device=input_.device),
-            torch.randn(100, *tuple(decoder_.shape[1:]), device=decoder_.device)
+            torch.randn(20, *tuple(input_.shape)[1:], device=input_.device),
+            torch.randn(20, *tuple(decoder_.shape[1:]), device=decoder_.device)
         )
 
     attr_method_class = ATTR_NAME_TO_CLASS.get(ATTR_NAME_ALIASES.get(attr_method, attr_method), None)
