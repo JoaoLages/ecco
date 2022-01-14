@@ -1,3 +1,4 @@
+import inspect
 from functools import partial
 import torch
 from typing import Any, Dict
@@ -10,7 +11,10 @@ from captum.attr import (
     GuidedBackprop,
     GuidedGradCam,
     Deconvolution,
-    LRP
+    LRP,
+    GradientShap,
+    ShapleyValueSampling,
+    KernelShap
 )
 from torch.nn import functional as F
 import transformers
@@ -24,7 +28,10 @@ ATTR_NAME_ALIASES = {
     'gb': 'guided_backprop',
     'gg': 'guided_gradcam',
     'deconv': 'deconvolution',
-    'lrp': 'layer_relevance_propagation'
+    'lrp': 'layer_relevance_propagation',
+    'gs': 'gradient_shap',
+    'grad_shap': 'gradient_shap',
+    'shap': 'shapley_values'
 }
 
 ATTR_NAME_TO_CLASS = { # TODO: Add more Captum Primary attributions with needed computed arguments
@@ -36,13 +43,16 @@ ATTR_NAME_TO_CLASS = { # TODO: Add more Captum Primary attributions with needed 
     'guided_backprop': GuidedBackprop,
     'guided_gradcam': GuidedGradCam,
     'deconvolution': Deconvolution,
-    'layer_relevance_propagation': LRP
+    'layer_relevance_propagation': LRP,
+    'gradient_shap': GradientShap,
+    'shapley_values': ShapleyValueSampling,
+    'kernel_shap': KernelShap
 }
 
 
 def compute_primary_attributions_scores(attr_method : str, model: transformers.PreTrainedModel,
                                         forward_kwargs: Dict[str, Any], prediction_id: torch.Tensor,
-                                        aggregation: str = "L2") -> torch.Tensor:
+                                        aggregation: str = "L2", normalize: bool = True) -> torch.Tensor:
     """
     Computes the primary attributions with respect to the specified `prediction_id`.
 
@@ -70,11 +80,13 @@ def compute_primary_attributions_scores(attr_method : str, model: transformers.P
         # attributes has shape (batch, sequence size, embedding dim)
         attributes = attributes.squeeze(0)
 
-        if aggregation == "L2":  # norm calculates a scalar value (L2 Norm)
-            norm = torch.norm(attributes, dim=1)
-            attributes = norm / torch.sum(norm)  # Normalize the values so they add up to 1
+        if aggregation == "L2":
+            attributes = torch.norm(attributes, dim=1) # norm calculates a scalar value (L2 Norm)
         else:
             raise NotImplemented
+
+        if normalize:
+            attributes = attributes / torch.sum(attributes)  # Normalize the values so they add up to 1
 
         return attributes
 
@@ -86,9 +98,11 @@ def compute_primary_attributions_scores(attr_method : str, model: transformers.P
     if decoder_ is None:
         forward_func = partial(model_forward, decoder_=decoder_, model=model, extra_forward_args=extra_forward_args)
         inputs = input_
+        baselines = torch.randn(100, *tuple(inputs.shape))
     else:
         forward_func = partial(model_forward, model=model, extra_forward_args=extra_forward_args)
         inputs = tuple([input_, decoder_])
+        baselines = (torch.randn(100, *tuple(input_.shape)), torch.randn(20, *tuple(input_.shape)))
 
     attr_method_class = ATTR_NAME_TO_CLASS.get(ATTR_NAME_ALIASES.get(attr_method, attr_method), None)
     if attr_method_class is None:
@@ -97,8 +111,13 @@ def compute_primary_attributions_scores(attr_method : str, model: transformers.P
             f"Please choose one of the methods: {list(ATTR_NAME_TO_CLASS.keys())}"
         )
 
-    ig = attr_method_class(forward_func=forward_func)
-    attributions = ig.attribute(inputs, target=prediction_id)
+    attr_obj = attr_method_class(forward_func)
+    attribute_args = {'inputs': inputs, 'target': prediction_id}
+    if 'baselines' in inspect.signature(attr_obj.attribute).parameters:
+        attribute_args['baselines'] = baselines
+    if 'n_samples' in inspect.signature(attr_obj.attribute).parameters:
+        attribute_args['n_samples'] = 200
+    attributions = attr_obj.attribute(**attribute_args)
 
     if decoder_ is not None:
         # Does it make sense to concatenate encoder and decoder attributions before normalization?

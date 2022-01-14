@@ -120,7 +120,8 @@ class LM(object):
                        encoder_attention_mask: Optional, # TODO: use encoder mask and also decoder mask
                        decoder_input_embeds: Optional[torch.Tensor],
                        prediction_id: torch.Tensor,
-                       attribution_flags: Optional[List[str]] = []) -> None:
+                       normalize_attributions: bool = True,
+                       attribution_flags: Optional[List[str]] = [],) -> None:
         """
         Analyzes a predicted token.
         Currently this methods computes the primary attribution explainability scores for each given token.
@@ -139,19 +140,21 @@ class LM(object):
                         'inputs_embeds': encoder_input_embeds,
                         'decoder_inputs_embeds': decoder_input_embeds
                     },
-                    prediction_id=prediction_id
+                    prediction_id=prediction_id,
+                    normalize=normalize_attributions
                 ).cpu().detach().numpy()
             )
 
     def generate(self, input_str: str,
-                 max_length: Optional[int] = 8,
+                 max_length: int = 8,
+                 do_sample: bool = False,
+                 attribution: List[str] = [],
+                 normalize_attributions: bool = True,
+                 beam_size: int = 1,
                  temperature: Optional[float] = None,
                  top_k: Optional[int] = None,
                  top_p: Optional[float] = None,
-                 do_sample: Optional[bool] = False,
-                 attribution: Optional[List[str]] = [],
                  generate: Optional[int] = None,
-                 beam_size: int = 1,
                  **generate_kwargs: Any):
         """
         Generate tokens in response to an input prompt.
@@ -278,7 +281,8 @@ class LM(object):
                 encoder_attention_mask=attention_mask,
                 decoder_input_embeds=decoder_input_embeds,
                 attribution_flags=attribution,
-                prediction_id=prediction_id
+                prediction_id=prediction_id,
+                normalize_attributions=normalize_attributions
             )
 
             # Recomputing inputs ids, attention mask and decoder input ids
