@@ -26,7 +26,8 @@ def from_pretrained(hf_model_id: str,
                     hidden_states: Optional[bool] = True,
                     activations_layer_nums: Optional[List[int]] = None,
                     verbose: Optional[bool] = True,
-                    gpu: Optional[bool] = True
+                    gpu: Optional[bool] = True,
+                    model_cls = None
                     ):
     """
     Constructs a [LM][ecco.lm.LM] object based on a string identifier from HuggingFace Transformers. This is
@@ -73,12 +74,13 @@ def from_pretrained(hf_model_id: str,
 
     tokenizer = AutoTokenizer.from_pretrained(hf_model_id)
 
-    if config['type'] == 'enc-dec':
-        model_cls = AutoModelForSeq2SeqLM
-    elif config['type'] == 'causal':
-        model_cls = AutoModelForCausalLM
-    else:
-        model_cls = AutoModel
+    if model_cls is None:
+        if config['type'] == 'enc-dec':
+            model_cls = AutoModelForSeq2SeqLM
+        elif config['type'] == 'causal':
+            model_cls = AutoModelForCausalLM
+        else:
+            model_cls = AutoModel
 
     model = model_cls.from_pretrained(hf_model_id, output_hidden_states=hidden_states, output_attentions=attention)
 
