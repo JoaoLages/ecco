@@ -263,10 +263,13 @@ class LM(object):
                 # attach hooks and run last forward step
                 # TODO: collect activation for more than 1 step
                 self._attach_hooks(self.model)
-                extra_forward_kwargs = {'attention_mask': attention_mask, 'decoder_inputs_embeds': decoder_input_embeds}
+                extra_forward_kwargs = {
+                    'attention_mask': attention_mask,
+                    'decoder_inputs_embeds': decoder_input_embeds,
+                    'use_cache': False
+                }
                 forward_kwargs = {
                     'inputs_embeds': encoder_input_embeds,
-                    'use_cache': False,
                     'return_dict': True,
                     **{k: v for k, v in extra_forward_kwargs.items() if k in inspect.signature(self.model.forward).parameters}
                 }
