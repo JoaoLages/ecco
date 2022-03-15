@@ -28,7 +28,8 @@ def from_pretrained(hf_model_id: str,
                     activations_layer_nums: Optional[List[int]] = None,
                     verbose: Optional[bool] = True,
                     gpu: Optional[bool] = True,
-                    model_cls: Optional[_BaseAutoModelClass] = None
+                    model_cls: Optional[_BaseAutoModelClass] = None,
+                    tokenizer_cls = AutoTokenizer
                     ):
     """
     Constructs a [LM][ecco.lm.LM] object based on a string identifier from HuggingFace Transformers. This is
@@ -74,7 +75,7 @@ def from_pretrained(hf_model_id: str,
     else:
         config = load_config(hf_model_id)
 
-    tokenizer = AutoTokenizer.from_pretrained(hf_model_id)
+    tokenizer = tokenizer_cls.from_pretrained(hf_model_id)
 
     if model_cls is None:
         if config['type'] == 'enc-dec':
