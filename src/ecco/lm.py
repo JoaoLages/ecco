@@ -266,11 +266,11 @@ class LM(object):
                 extra_forward_kwargs = {
                     'attention_mask': attention_mask,
                     'decoder_inputs_embeds': decoder_input_embeds,
-                    'use_cache': False
+                    'use_cache': False,
+                    'return_dict': True
                 }
                 forward_kwargs = {
                     'inputs_embeds': encoder_input_embeds,
-                    'return_dict': True,
                     **{k: v for k, v in extra_forward_kwargs.items() if k in inspect.signature(self.model.forward).parameters}
                 }
                 _ = self.model(**forward_kwargs)

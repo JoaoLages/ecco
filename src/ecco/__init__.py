@@ -15,6 +15,7 @@ Usage:
 __version__ = '0.1.2'
 from ecco.lm import LM
 from transformers import AutoTokenizer, AutoModelForCausalLM, AutoModel, AutoModelForSeq2SeqLM
+from transformers.models.auto.auto_factory import _BaseAutoModelClass
 from typing import Any, Dict, Optional, List
 from ecco.util import load_config, pack_tokenizer_config
 
@@ -27,7 +28,7 @@ def from_pretrained(hf_model_id: str,
                     activations_layer_nums: Optional[List[int]] = None,
                     verbose: Optional[bool] = True,
                     gpu: Optional[bool] = True,
-                    model_cls = None
+                    model_cls: Optional[_BaseAutoModelClass] = None
                     ):
     """
     Constructs a [LM][ecco.lm.LM] object based on a string identifier from HuggingFace Transformers. This is
@@ -65,6 +66,7 @@ def from_pretrained(hf_model_id: str,
                                                       default and all layer are collected if 'activations' is set to True. Defaults to None.
         verbose (Optional[bool]): If True, model.generate() displays output tokens in HTML as they're generated. Defaults to True.
         gpu (Optional[bool]): Set to False to force using the CPU even if a GPU exists. Defaults to True.
+        model_cls (Optional[_BaseAutoModelClass]): A type of AutoModel class, in case you do not want to use the defaults given for each model 'type'.
     """
 
     if model_config:
