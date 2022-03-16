@@ -235,15 +235,15 @@ class LM(object):
             prediction_ids, prediction_scores = output.sequences[0][1:], output.scores
 
         elif output.__class__.__name__.endswith("DecoderOnlyOutput"):
-            prediction_ids, prediction_scores = output.sequences[0][n_input_tokens:], output.scores
+            prediction_ids, prediction_scores = output.sequences[0], output.scores
 
         else:
             raise NotImplementedError(f"Unexpected output type: {type(output)}")
 
         assert prediction_ids != []
-        assert len(prediction_ids) == len(prediction_scores)
-        for pred_id, scores in zip(prediction_ids, prediction_scores):
-            prediction_logits.append(scores[0][pred_id])
+        # assert len(prediction_ids) == len(prediction_scores)
+        # for pred_id, scores in zip(prediction_ids, prediction_scores):
+        #     prediction_logits.append(scores[0][pred_id])
 
         # Analyze each generated token
         self.attributions = defaultdict(list) # reset attributions dict
