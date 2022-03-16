@@ -120,7 +120,8 @@ class LM(object):
                        encoder_attention_mask: Optional, # TODO: use encoder mask and also decoder mask
                        decoder_input_embeds: Optional[torch.Tensor],
                        prediction_id: torch.Tensor,
-                       attribution_flags: Optional[List[str]] = []) -> None:
+                       attribution_flags: Optional[List[str]] = [],
+                       pred_index: int = None) -> None:
         """
         Analyzes a predicted token.
         Currently this methods computes the primary attribution explainability scores for each given token.
@@ -139,7 +140,8 @@ class LM(object):
                         'inputs_embeds': encoder_input_embeds,
                         'decoder_inputs_embeds': decoder_input_embeds
                     },
-                    prediction_id=prediction_id
+                    prediction_id=prediction_id,
+                    pred_index=pred_index
                 ).cpu().detach().numpy()
             )
 
@@ -214,28 +216,16 @@ class LM(object):
 
         # Get model output
         self._remove_hooks() # deactivate hooks: we will run them for the last model forward only
-        output = self.model.generate(
+        output = self.model(
             input_ids=input_ids,
             attention_mask=attention_mask,
-            num_beams=beam_size,
-            # FIXME: +1 in max_length to account for first start token in decoder, find a better way to do this
-            max_length=(generate or max_length - cur_len) + 1 if self.model_type == 'enc-dec' else max_length,
-            do_sample=do_sample,
-            top_p=top_p,
-            top_k=top_k,
-            temperature=temperature,
-            return_dict_in_generate=True,
-            output_scores=True,
             **generate_kwargs
         )
 
         # Get prediction logits for each chosen prediction id
         prediction_logits, prediction_ids = [], []
-        if output.__class__.__name__.endswith("EncoderDecoderOutput"):
-            prediction_ids, prediction_scores = output.sequences[0][1:], output.scores
-
-        elif output.__class__.__name__.endswith("DecoderOnlyOutput"):
-            prediction_ids, prediction_scores = output.sequences[0], output.scores
+        if output.__class__.__name__.endswith("MaskedLMOutput"):
+            prediction_ids, prediction_scores = output.logits.argmax(-1)[0], output.logits[0]
 
         else:
             raise NotImplementedError(f"Unexpected output type: {type(output)}")
@@ -281,7 +271,8 @@ class LM(object):
                 encoder_attention_mask=attention_mask,
                 decoder_input_embeds=decoder_input_embeds,
                 attribution_flags=attribution,
-                prediction_id=prediction_id
+                prediction_id=prediction_id,
+                pred_index=pred_index
             )
 
             # Recomputing inputs ids, attention mask and decoder input ids

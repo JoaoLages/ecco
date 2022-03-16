@@ -42,7 +42,7 @@ ATTR_NAME_TO_CLASS = { # TODO: Add more Captum Primary attributions with needed 
 
 def compute_primary_attributions_scores(attr_method : str, model: transformers.PreTrainedModel,
                                         forward_kwargs: Dict[str, Any], prediction_id: torch.Tensor,
-                                        aggregation: str = "L2") -> torch.Tensor:
+                                        aggregation: str = "L2", pred_index: int = None) -> torch.Tensor:
     """
     Computes the primary attributions with respect to the specified `prediction_id`.
 
@@ -64,7 +64,7 @@ def compute_primary_attributions_scores(attr_method : str, model: transformers.P
             output = model(inputs_embeds=input_, decoder_inputs_embeds=decoder_, **extra_forward_args)
         else:
             output = model(inputs_embeds=input_, **extra_forward_args)
-        return F.softmax(output.logits[:, -1, :], dim=-1)
+        return F.softmax(output.logits[:, pred_index, :], dim=-1)
 
     def normalize_attributes(attributes: torch.Tensor) -> torch.Tensor:
         # attributes has shape (batch, sequence size, embedding dim)
