@@ -237,6 +237,7 @@ class LM(object):
 
         # Analyze each generated token
         self.attributions = defaultdict(list) # reset attributions dict
+        generated_token_ids = input_ids
         for pred_index, prediction_id in enumerate(prediction_ids):
 
             # First get encoder/decoder input embeddings
@@ -283,6 +284,10 @@ class LM(object):
                     dim=-1
                 )
             else:
+                generated_token_ids = torch.cat(
+                    [generated_token_ids, torch.tensor([[prediction_id]], device=input_ids.device)],
+                    dim=-1
+                )
                 pass
                 # input_ids = torch.cat(
                 #     [input_ids, torch.tensor([[prediction_id]], device=input_ids.device)],
@@ -296,7 +301,7 @@ class LM(object):
                 #     attention_mask = self.to(attention_mask)
 
             offset = n_input_tokens if decoder_input_ids is not None else 0
-            generated_token_ids = decoder_input_ids if decoder_input_ids is not None else input_ids
+            # generated_token_ids = decoder_input_ids if decoder_input_ids is not None else input_ids
 
             # More than one token can be generated at once (e.g., automatic split/pad tokens)
             while len(generated_token_ids[0]) + offset != n_printed_tokens:
