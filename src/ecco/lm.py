@@ -283,16 +283,17 @@ class LM(object):
                     dim=-1
                 )
             else:
-                input_ids = torch.cat(
-                    [input_ids, torch.tensor([[prediction_id]], device=input_ids.device)],
-                    dim=-1
-                )
-
-                # Recomputing Attention Mask
-                if getattr(self.model, '_prepare_attention_mask_for_generation'):
-                    assert len(input_ids.size()) == 2 # will break otherwise
-                    attention_mask = self.model._prepare_attention_mask_for_generation(input_ids, pad_token_id, eos_token_id)
-                    attention_mask = self.to(attention_mask)
+                pass
+                # input_ids = torch.cat(
+                #     [input_ids, torch.tensor([[prediction_id]], device=input_ids.device)],
+                #     dim=-1
+                # )
+                #
+                # # Recomputing Attention Mask
+                # if getattr(self.model, '_prepare_attention_mask_for_generation'):
+                #     assert len(input_ids.size()) == 2 # will break otherwise
+                #     attention_mask = self.model._prepare_attention_mask_for_generation(input_ids, pad_token_id, eos_token_id)
+                #     attention_mask = self.to(attention_mask)
 
             offset = n_input_tokens if decoder_input_ids is not None else 0
             generated_token_ids = decoder_input_ids if decoder_input_ids is not None else input_ids
