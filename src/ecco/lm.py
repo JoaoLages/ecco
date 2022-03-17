@@ -381,8 +381,7 @@ class LM(object):
         #     token = self.tokenizer.decode([i])
         #     tokens.append(token)
 
-        # attributions = {k: [x[:n_input_tokens] for x in v] for k, v in self.attributions.items()}
-        attributions = self.attributions
+        attributions = {k: [x[:n_input_tokens + i + 1] for x in v] for i, (k, v) in enumerate(self.attributions.items())}
         attn = getattr(output, "attentions", None)
 
         return OutputSeq(**{'tokenizer': self.tokenizer,
