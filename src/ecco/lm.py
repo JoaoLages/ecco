@@ -371,7 +371,7 @@ class LM(object):
 
         if decoder_input_ids is not None:
             assert len(decoder_input_ids.size()) == 2
-            all_token_ids = torch.cat([input_ids, decoder_input_ids], dim=-1)[0]
+            all_token_ids = torch.cat([generated_token_ids, decoder_input_ids], dim=-1)[0]
         else:
             all_token_ids = input_ids[0]
 
@@ -381,7 +381,7 @@ class LM(object):
         #     token = self.tokenizer.decode([i])
         #     tokens.append(token)
 
-        attributions = {k: [x[:n_input_tokens + i + 1] for x in v] for i, (k, v) in enumerate(self.attributions.items())}
+        attributions = self.attributions
         attn = getattr(output, "attentions", None)
 
         return OutputSeq(**{'tokenizer': self.tokenizer,
