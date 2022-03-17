@@ -373,7 +373,7 @@ class LM(object):
             assert len(decoder_input_ids.size()) == 2
             all_token_ids = torch.cat([generated_token_ids, decoder_input_ids], dim=-1)[0]
         else:
-            all_token_ids = input_ids[0]
+            all_token_ids = generated_token_ids[0]
 
         tokens = self.tokenizer.convert_ids_to_tokens(all_token_ids)
         # tokens = []
